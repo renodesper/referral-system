@@ -10,21 +10,25 @@ use axum::{
 };
 use error::AppError;
 use serde::{Deserialize, Serialize};
-use sqlx::{PgPool, Postgres, Row, Transaction, postgres::PgPoolOptions};
+use sqlx::{PgPool, Postgres, Transaction, postgres::PgPoolOptions};
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
-use tower_http::trace::TraceLayer;
+use tower_http::trace::{TraceLayer, DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse};
 use tracing_subscriber::{
     EnvFilter,
     layer::SubscriberExt,
     util::SubscriberInitExt,
 };
+use tracing::Level;
 use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct AppState {
     pub pool: PgPool,
 }
+
+const L1: i32 = 1;
+const L2: i32 = 2;
 
 const L1_PERCENTAGE: i32 = 10;
 const L2_PERCENTAGE: i32 = 5;
@@ -36,12 +40,12 @@ const PAYMENT_STATUS_CAPTURED: &str = "captured";
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    dotenvy::dotenv().ok();
+
     tracing_subscriber::registry()
         .with(EnvFilter::from_default_env())
         .with(tracing_subscriber::fmt::layer())
         .init();
-
-    dotenvy::dotenv().ok();
 
     let pool = create_pool().await?;
     let app_state = AppState { pool };
@@ -59,7 +63,14 @@ async fn main() -> Result<()> {
         .route("/purchases", post(create_purchase_handler))
         .route("/process/{id}", post(process_purchase_handler))
         .with_state(app_state)
-        .layer(TraceLayer::new_for_http());
+        .layer(TraceLayer::new_for_http()
+                    .make_span_with(
+                        DefaultMakeSpan::new()
+                            .level(Level::INFO) // span level
+                    )
+                    .on_request(DefaultOnRequest::new().level(Level::INFO))
+                    .on_response(DefaultOnResponse::new().level(Level::INFO)),
+        );
 
     println!("Listening on 0.0.0.0:{}", port);
     axum::serve(listener, app).await?;
@@ -179,15 +190,19 @@ async fn process_purchase(pool: &PgPool, purchase_id: Uuid) -> Result<()> {
 
     if let Some(u1) = l1 {
         let amt = percent_of(amount, L1_PERCENTAGE);
-        if amt > 0 {
-            insert_reward(&mut tx, purchase_id, u1, 1, amt).await?;
+        let has_been_rewarded = has_rewarded(&mut tx, purchase_id, u1, L1).await?;
+
+        if amt > 0 && !has_been_rewarded {
+            insert_reward(&mut tx, purchase_id, rec.user_id, u1, 1, amt).await?;
             add_balance(&mut tx, u1, amt).await?;
         }
     }
     if let Some(u2) = l2 {
         let amt = percent_of(amount, L2_PERCENTAGE);
-        if amt > 0 {
-            insert_reward(&mut tx, purchase_id, u2, 2, amt).await?;
+        let has_been_rewarded = has_rewarded(&mut tx, purchase_id, u2, L2).await?;
+
+        if amt > 0 && !has_been_rewarded {
+            insert_reward(&mut tx, purchase_id, rec.user_id, u2, 2, amt).await?;
             add_balance(&mut tx, u2, amt).await?;
         }
     }
@@ -201,19 +216,17 @@ fn percent_of(amount: i64, percent: i32) -> i64 {
 }
 
 async fn active_referrer(tx: &mut Transaction<'_, Postgres>, user_id: i64) -> Result<Option<i64>> {
-    let row = sqlx::query::<Postgres>("SELECT referrer_id FROM users WHERE id = $1")
-        .bind(user_id)
+    let row = sqlx::query!(r#"SELECT referrer_id FROM users WHERE id = $1"#, user_id)
         .fetch_one(tx.as_mut()) // <- use underlying connection from Transaction
         .await?;
 
-    let referrer_id: Option<i64> = row.try_get("referrer_id")?;
+    let referrer_id = row.referrer_id;
     if let Some(rid) = referrer_id {
-        if let Some(r2) = sqlx::query::<Postgres>("SELECT is_active FROM users WHERE id = $1")
-            .bind(rid)
+        if let Some(r2) = sqlx::query!(r#"SELECT is_active FROM users WHERE id = $1"#, rid)
             .fetch_optional(tx.as_mut())
             .await?
         {
-            if r2.try_get::<bool, _>("is_active").unwrap_or(false) {
+            if r2.is_active {
                 return Ok(Some(rid));
             }
         }
@@ -221,18 +234,32 @@ async fn active_referrer(tx: &mut Transaction<'_, Postgres>, user_id: i64) -> Re
     Ok(None)
 }
 
+async fn has_rewarded(tx: &mut Transaction<'_, Postgres>, purchase_id: Uuid, beneficiary_user_id: i64, level: i32) -> Result<bool> {
+    let id = sqlx::query_scalar!(
+        r#"SELECT id FROM rewards where purchase_id = $1 AND beneficiary_user_id = $2 AND level = $3"#,
+        purchase_id,
+        beneficiary_user_id,
+        level
+    )
+        .fetch_optional(tx.as_mut())
+        .await?;
+    Ok(id.is_some())
+}
+
 async fn insert_reward(
     tx: &mut Transaction<'_, Postgres>,
     purchase_id: Uuid,
-    beneficiary_id: i64,
+    user_id: i64,
+    beneficiary_user_id: i64,
     level: i32,
     amount: i64,
 ) -> Result<()> {
     sqlx::query!(
-        r#"INSERT INTO rewards (purchase_id, beneficiary_user_id, level, amount) VALUES ($1, $2, $3, $4)
+        r#"INSERT INTO rewards (purchase_id, user_id, beneficiary_user_id, level, amount) VALUES ($1, $2, $3, $4, $5)
   ON CONFLICT (purchase_id, beneficiary_user_id, level) DO NOTHING"#,
         purchase_id,
-        beneficiary_id,
+        user_id,
+        beneficiary_user_id,
         level,
         amount
     )

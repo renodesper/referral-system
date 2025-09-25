@@ -38,12 +38,13 @@ CREATE TABLE IF NOT EXISTS purchases (
 );
 ```
 
-### Referrals
+### Rewards
 
 ```sql
 CREATE TABLE IF NOT EXISTS rewards (
     id BIGSERIAL PRIMARY KEY,
     purchase_id UUID NOT NULL REFERENCES purchases (id),
+    user_id BIGINT NOT NULL REFERENCES users (id),
     beneficiary_user_id BIGINT NOT NULL REFERENCES users (id),
     level INT NOT NULL CHECK (level IN (1, 2)),
     amount BIGINT NOT NULL CHECK (amount >= 0),
@@ -55,6 +56,7 @@ CREATE TABLE IF NOT EXISTS rewards (
 
 ```sql
 CREATE INDEX IF NOT EXISTS purchases_user_idx ON purchases (user_id);
+CREATE INDEX IF NOT EXISTS rewards_user_idx ON rewards (user_id);
 CREATE INDEX IF NOT EXISTS rewards_beneficiary_idx ON rewards (beneficiary_user_id);
 ```
 
