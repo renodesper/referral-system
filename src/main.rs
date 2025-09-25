@@ -169,7 +169,10 @@ async fn process_purchase(pool: &PgPool, purchase_id: Uuid) -> Result<()> {
     let mut tx = pool.begin().await?;
 
     let rec =
-        sqlx::query!(r#"SELECT id, user_id, amount, status FROM purchases WHERE id = $1 FOR UPDATE"#, purchase_id)
+        sqlx::query!(
+            r#"SELECT id, user_id, amount, status FROM purchases WHERE id = $1 FOR UPDATE"#,
+            purchase_id
+        )
             .fetch_one(tx.as_mut())
             .await?;
 
@@ -255,7 +258,7 @@ async fn insert_reward(
 ) -> Result<()> {
     sqlx::query!(
         r#"INSERT INTO rewards (purchase_id, user_id, beneficiary_user_id, level, amount) VALUES ($1, $2, $3, $4, $5)
-  ON CONFLICT (purchase_id, beneficiary_user_id, level) DO NOTHING"#,
+           ON CONFLICT (purchase_id, beneficiary_user_id, level) DO NOTHING"#,
         purchase_id,
         user_id,
         beneficiary_user_id,
@@ -270,7 +273,7 @@ async fn insert_reward(
 async fn add_balance(tx: &mut Transaction<'_, Postgres>, user_id: i64, delta: i64) -> Result<()> {
     sqlx::query!(
         r#"INSERT INTO balances (user_id, balance) VALUES ($1, $2)
-  ON CONFLICT (user_id) DO UPDATE SET balance = balances.balance + EXCLUDED.balance"#,
+           ON CONFLICT (user_id) DO UPDATE SET balance = balances.balance + EXCLUDED.balance"#,
         user_id,
         delta
     )
