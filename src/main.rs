@@ -173,8 +173,7 @@ async fn process_purchase(pool: &PgPool, purchase_id: Uuid) -> Result<()> {
             .fetch_one(tx.as_mut())
             .await?;
 
-    let status: String = rec.status;
-    if status != PAYMENT_STATUS_CAPTURED {
+    if rec.status.as_str() != PAYMENT_STATUS_CAPTURED {
         tx.commit().await?;
         return Ok(());
     }
@@ -193,7 +192,7 @@ async fn process_purchase(pool: &PgPool, purchase_id: Uuid) -> Result<()> {
         let has_been_rewarded = has_rewarded(&mut tx, purchase_id, u1, L1).await?;
 
         if amt > 0 && !has_been_rewarded {
-            insert_reward(&mut tx, purchase_id, rec.user_id, u1, 1, amt).await?;
+            insert_reward(&mut tx, purchase_id, buyer_id, u1, 1, amt).await?;
             add_balance(&mut tx, u1, amt).await?;
         }
     }
@@ -202,7 +201,7 @@ async fn process_purchase(pool: &PgPool, purchase_id: Uuid) -> Result<()> {
         let has_been_rewarded = has_rewarded(&mut tx, purchase_id, u2, L2).await?;
 
         if amt > 0 && !has_been_rewarded {
-            insert_reward(&mut tx, purchase_id, rec.user_id, u2, 2, amt).await?;
+            insert_reward(&mut tx, purchase_id, buyer_id, u2, 2, amt).await?;
             add_balance(&mut tx, u2, amt).await?;
         }
     }
@@ -236,7 +235,7 @@ async fn active_referrer(tx: &mut Transaction<'_, Postgres>, user_id: i64) -> Re
 
 async fn has_rewarded(tx: &mut Transaction<'_, Postgres>, purchase_id: Uuid, beneficiary_user_id: i64, level: i32) -> Result<bool> {
     let id = sqlx::query_scalar!(
-        r#"SELECT id FROM rewards where purchase_id = $1 AND beneficiary_user_id = $2 AND level = $3"#,
+        r#"SELECT 1 FROM rewards where purchase_id = $1 AND beneficiary_user_id = $2 AND level = $3"#,
         purchase_id,
         beneficiary_user_id,
         level
