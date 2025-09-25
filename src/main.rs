@@ -2,10 +2,10 @@ mod error;
 
 use anyhow::Context;
 use anyhow::Result;
-use axum::http::StatusCode;
 use axum::{
     Json, Router,
     extract::{Path, State},
+    http::StatusCode,
     routing::{get, post},
 };
 use error::AppError;
@@ -14,9 +14,11 @@ use sqlx::{PgPool, Postgres, Row, Transaction, postgres::PgPoolOptions};
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
 use tower_http::trace::TraceLayer;
-use tracing_subscriber::EnvFilter;
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::{
+    EnvFilter,
+    layer::SubscriberExt,
+    util::SubscriberInitExt,
+};
 use uuid::Uuid;
 
 #[derive(Clone)]
