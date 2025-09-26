@@ -13,13 +13,9 @@ use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Postgres, Transaction, postgres::PgPoolOptions};
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
-use tower_http::trace::{TraceLayer, DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse};
-use tracing_subscriber::{
-    EnvFilter,
-    layer::SubscriberExt,
-    util::SubscriberInitExt,
-};
+use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
 use tracing::Level;
+use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -63,13 +59,13 @@ async fn main() -> Result<()> {
         .route("/purchases", post(create_purchase_handler))
         .route("/process/{id}", post(process_purchase_handler))
         .with_state(app_state)
-        .layer(TraceLayer::new_for_http()
-                    .make_span_with(
-                        DefaultMakeSpan::new()
-                            .level(Level::INFO) // span level
-                    )
-                    .on_request(DefaultOnRequest::new().level(Level::INFO))
-                    .on_response(DefaultOnResponse::new().level(Level::INFO)),
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(
+                    DefaultMakeSpan::new().level(Level::INFO), // span level
+                )
+                .on_request(DefaultOnRequest::new().level(Level::INFO))
+                .on_response(DefaultOnResponse::new().level(Level::INFO)),
         );
 
     println!("Listening on 0.0.0.0:{}", port);
@@ -108,12 +104,10 @@ async fn get_balance_handler(
         r#"SELECT balance FROM balances WHERE user_id = $1"#,
         user_id
     )
-        .fetch_optional(&st.pool)
-        .await
-        .map_err(|e| e.to_string())?;
-    let balance: i64 = row
-        .map(|r| r.balance)
-        .unwrap_or(0);
+    .fetch_optional(&st.pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    let balance: i64 = row.map(|r| r.balance).unwrap_or(0);
 
     Ok(Json(
         serde_json::json!({ "user_id": user_id, "balance": balance }),
@@ -168,13 +162,12 @@ async fn process_purchase_handler(
 async fn process_purchase(pool: &PgPool, purchase_id: Uuid) -> Result<()> {
     let mut tx = pool.begin().await?;
 
-    let rec =
-        sqlx::query!(
-            r#"SELECT id, user_id, amount, status FROM purchases WHERE id = $1 FOR UPDATE"#,
-            purchase_id
-        )
-            .fetch_one(tx.as_mut())
-            .await?;
+    let rec = sqlx::query!(
+        r#"SELECT id, user_id, amount, status FROM purchases WHERE id = $1 FOR UPDATE"#,
+        purchase_id
+    )
+    .fetch_one(tx.as_mut())
+    .await?;
 
     if rec.status.as_str() != PAYMENT_STATUS_CAPTURED {
         tx.commit().await?;
@@ -192,20 +185,18 @@ async fn process_purchase(pool: &PgPool, purchase_id: Uuid) -> Result<()> {
 
     if let Some(u1) = l1 {
         let amt = percent_of(amount, L1_PERCENTAGE);
-        let has_been_rewarded = has_rewarded(&mut tx, purchase_id, u1, L1).await?;
-
-        if amt > 0 && !has_been_rewarded {
-            insert_reward(&mut tx, purchase_id, buyer_id, u1, 1, amt).await?;
-            add_balance(&mut tx, u1, amt).await?;
+        if amt > 0 {
+            if insert_reward(&mut tx, purchase_id, buyer_id, u1, 1, amt).await? {
+                add_balance(&mut tx, u1, amt).await?;
+            }
         }
     }
     if let Some(u2) = l2 {
         let amt = percent_of(amount, L2_PERCENTAGE);
-        let has_been_rewarded = has_rewarded(&mut tx, purchase_id, u2, L2).await?;
-
-        if amt > 0 && !has_been_rewarded {
-            insert_reward(&mut tx, purchase_id, buyer_id, u2, 2, amt).await?;
-            add_balance(&mut tx, u2, amt).await?;
+        if amt > 0 {
+            if insert_reward(&mut tx, purchase_id, buyer_id, u2, 2, amt).await? {
+                add_balance(&mut tx, u2, amt).await?;
+            }
         }
     }
 
@@ -236,18 +227,6 @@ async fn active_referrer(tx: &mut Transaction<'_, Postgres>, user_id: i64) -> Re
     Ok(None)
 }
 
-async fn has_rewarded(tx: &mut Transaction<'_, Postgres>, purchase_id: Uuid, beneficiary_user_id: i64, level: i32) -> Result<bool> {
-    let id = sqlx::query_scalar!(
-        r#"SELECT 1 FROM rewards where purchase_id = $1 AND beneficiary_user_id = $2 AND level = $3"#,
-        purchase_id,
-        beneficiary_user_id,
-        level
-    )
-        .fetch_optional(tx.as_mut())
-        .await?;
-    Ok(id.is_some())
-}
-
 async fn insert_reward(
     tx: &mut Transaction<'_, Postgres>,
     purchase_id: Uuid,
@@ -255,8 +234,8 @@ async fn insert_reward(
     beneficiary_user_id: i64,
     level: i32,
     amount: i64,
-) -> Result<()> {
-    sqlx::query!(
+) -> Result<bool> {
+    let res = sqlx::query!(
         r#"INSERT INTO rewards (purchase_id, user_id, beneficiary_user_id, level, amount) VALUES ($1, $2, $3, $4, $5)
            ON CONFLICT (purchase_id, beneficiary_user_id, level) DO NOTHING"#,
         purchase_id,
@@ -267,7 +246,8 @@ async fn insert_reward(
     )
     .execute(tx.as_mut())
     .await?;
-    Ok(())
+
+    Ok(res.rows_affected() == 1)
 }
 
 async fn add_balance(tx: &mut Transaction<'_, Postgres>, user_id: i64, delta: i64) -> Result<()> {
