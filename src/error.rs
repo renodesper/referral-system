@@ -4,42 +4,68 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde_json::json;
+use tracing::error;
+
+use crate::responses::RequestMeta;
+
+pub const E_BAD_AMOUNT: &str = "E_BAD_AMOUNT";
+pub const E_DB_FAILURE: &str = "E_DB_FAILURE";
+pub const E_PURCHASE_CONFLICT: &str = "E_PURCHASE_CONFLICT";
+pub const E_PROCESS_FAILURE: &str = "E_PROCESS_FAILURE";
 
 #[derive(Debug)]
-pub enum AppError {
+pub enum ApiError {
     BadRequest(String),
-    NotFound(String),
     Conflict(String),
     Internal(anyhow::Error),
 }
 
-impl IntoResponse for AppError {
-    fn into_response(self) -> Response {
-        match self {
-            AppError::BadRequest(msg) => {
-                let body = Json(json!({ "error": msg }));
-                (StatusCode::BAD_REQUEST, body).into_response()
-            }
-            AppError::NotFound(msg) => {
-                let body = Json(json!({ "error": msg }));
-                (StatusCode::NOT_FOUND, body).into_response()
-            }
-            AppError::Conflict(msg) => {
-                let body = Json(json!({ "error": msg }));
-                (StatusCode::CONFLICT, body).into_response()
-            }
-            AppError::Internal(err) => {
-                tracing::error!(error = ?err, "internal server error");
+#[derive(Debug)]
+pub struct ApiErrorWithMeta {
+    error: ApiError,
+    meta: RequestMeta,
+    code: Option<String>,
+}
 
-                let body = Json(json!({ "error": "internal server error" }));
-                (StatusCode::INTERNAL_SERVER_ERROR, body).into_response()
-            }
+impl ApiError {
+    pub fn with_meta(self, meta: RequestMeta) -> ApiErrorWithMeta {
+        ApiErrorWithMeta {
+            error: self,
+            meta,
+            code: None,
         }
     }
 }
 
-impl From<anyhow::Error> for AppError {
-    fn from(e: anyhow::Error) -> Self {
-        AppError::Internal(e)
+impl ApiErrorWithMeta {
+    pub fn with_code(mut self, code: &str) -> Self {
+        self.code = Some(code.to_string());
+        self
+    }
+}
+
+impl IntoResponse for ApiErrorWithMeta {
+    fn into_response(self) -> Response {
+        let (status, error_message) = match self.error {
+            ApiError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
+            ApiError::Conflict(msg) => (StatusCode::CONFLICT, msg),
+            ApiError::Internal(e) => {
+                error!("internal error: {:?}", e);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "internal server error".to_string(),
+                )
+            }
+        };
+
+        let mut body = json!({
+            "request_id": self.meta.request_id,
+            "error": error_message,
+        });
+        if let Some(code) = self.code {
+            body["code"] = json!(code);
+        }
+
+        (status, Json(body)).into_response()
     }
 }
