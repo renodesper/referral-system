@@ -1,15 +1,13 @@
-//! The main library for the referral system.
-
 mod api;
+pub mod config;
 mod error;
 mod responses;
-mod types;
 
 use anyhow::Context;
 use anyhow::Result;
-pub use api::init_router;
+pub use api::{AppState, init_router};
+pub use config::Config;
 use sqlx::{PgPool, Postgres, Transaction, postgres::PgPoolOptions};
-pub use types::{AppState, Referral, ReferralCode};
 use uuid::Uuid;
 
 /// The percentage for the first level referrer.
@@ -23,11 +21,10 @@ const PAYMENT_STATUS_CAPTURED: &str = "captured";
 // const PAYMENT_STATUS_VOIDED: &str = "voided";
 
 /// Initializes the database pool.
-pub async fn init_pool() -> Result<PgPool> {
-    let database_url = std::env::var("DATABASE_URL")?;
+pub async fn init_pool(database_url: &str) -> Result<PgPool> {
     let pool = PgPoolOptions::new()
         .max_connections(8)
-        .connect(&database_url)
+        .connect(database_url)
         .await
         .context("Failed to connect to Postgres")?;
     Ok(pool)

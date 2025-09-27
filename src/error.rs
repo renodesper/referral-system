@@ -8,10 +8,10 @@ use tracing::error;
 
 use crate::responses::RequestMeta;
 
-pub const E_BAD_AMOUNT: &str = "E_BAD_AMOUNT";
-pub const E_DB_FAILURE: &str = "E_DB_FAILURE";
-pub const E_PURCHASE_CONFLICT: &str = "E_PURCHASE_CONFLICT";
-pub const E_PROCESS_FAILURE: &str = "E_PROCESS_FAILURE";
+pub const E_BAD_AMOUNT: &str = "BAD_AMOUNT";
+pub const E_DB_FAILURE: &str = "DB_FAILURE";
+pub const E_PURCHASE_CONFLICT: &str = "PURCHASE_CONFLICT";
+pub const E_PROCESS_FAILURE: &str = "PROCESS_FAILURE";
 
 #[derive(Debug)]
 pub enum ApiError {
